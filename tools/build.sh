@@ -13,6 +13,14 @@ APKTOOL=${APKTOOL:-apktool}
 got=$(sha256sum "$STOCK" | cut -d' ' -f1)
 [ "$got" = "$STOCK_SHA256" ] || { echo "stock APK sha256 is $got, expected $STOCK_SHA256" >&2; exit 1; }
 
+# The signing key lives outside build/ so every rebuild installs over the previous one (a new
+# key forces an uninstall, which deletes DuckStation's data under Android/data, saves included).
+# Override with KEYSTORE=/path/to/your.keystore (store and key password "android", alias androiddebugkey).
+KS=${KEYSTORE:-$ROOT/fs-debug.keystore}
+if [ ! -f "$KS" ] && [ -f "$WORK/debug.keystore" ]; then
+  cp "$WORK/debug.keystore" "$KS"   # adopt the key from a build made before this change
+fi
+
 rm -rf "$WORK" && mkdir -p "$WORK"
 echo "== decode stock APK"
 $APKTOOL d -f "$STOCK" -o "$WORK/dec" >/dev/null
@@ -37,9 +45,11 @@ echo "== assemble APK (manifest, patch dex, library NOP)"
 python3 "$ROOT/tools/build_fs_raw.py" "$STOCK" "$WORK/AndroidManifest.bin" "$WORK/classes3.bin" "$WORK/unsigned.apk"
 
 echo "== sign"
-KS=$WORK/debug.keystore
-keytool -genkeypair -keystore "$KS" -storepass android -keypass android -alias androiddebugkey \
-  -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
+if [ ! -f "$KS" ]; then
+  echo "   (no keystore at $KS, creating one; keep it to update in place next time)"
+  keytool -genkeypair -keystore "$KS" -storepass android -keypass android -alias androiddebugkey \
+    -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
+fi
 apksigner sign --ks "$KS" --ks-pass pass:android --ks-key-alias androiddebugkey --key-pass pass:android \
   --out "$ROOT/DuckStation-FS.apk" "$WORK/unsigned.apk"
 
